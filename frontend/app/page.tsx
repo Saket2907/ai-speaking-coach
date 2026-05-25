@@ -13,8 +13,9 @@ export default function Home() {
     setLoading(true);
     setError(null);
     try {
+      const roomId = session-${Date.now()}-${Math.random().toString(36).slice(2, 7)};
       const res = await fetch(
-        `/api/token?room=speaking-coach-room&username=user-${Date.now()}`
+        /api/token?room=${roomId}&username=user-${Date.now()}
       );
       if (!res.ok) throw new Error("Failed to get session token");
       const data = await res.json();
