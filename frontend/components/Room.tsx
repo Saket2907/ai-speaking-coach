@@ -51,6 +51,12 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
   const transcriptions = useTranscriptions();
   const { chatMessages } = useChat();
 
+  // Debug: log agent identity and chat message senders
+  if (process.env.NODE_ENV === "development" || true) {
+    if (agent) console.log("Agent identity:", agent.identity);
+    if (chatMessages.length > 0) console.log("Last msg from:", chatMessages[chatMessages.length - 1].from?.identity);
+  }
+
   type SubLine = { text: string; isAgent: boolean };
   let lastTwo: SubLine[] = [];
   if (transcriptions.length > 0) {
@@ -59,10 +65,12 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
       isAgent: (t as unknown as { participantIdentity?: string }).participantIdentity?.startsWith("agent") ?? false,
     }));
   } else {
-    lastTwo = chatMessages.slice(-2).map((m) => ({
-      text: m.message,
-      isAgent: (m.from?.identity ?? "").startsWith("agent") || (m.from?.identity ?? "").startsWith("AI") || m.from?.identity === agent?.identity,
-    }));
+    lastTwo = chatMessages.slice(-2).map((m) => {
+      const identity = m.from?.identity ?? "";
+      // agent identity is never the local participant
+      const isAgent = identity !== localParticipant.identity && identity !== "";
+      return { text: m.message, isAgent };
+    });
   }
 
   const localTracks = useTracks([Track.Source.Camera], { onlySubscribed: false });
