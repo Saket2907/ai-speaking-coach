@@ -10,10 +10,10 @@ import {
   useTracks,
   RoomAudioRenderer,
   useTrackTranscription,
-  useRemoteParticipant,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { Track, TrackPublication } from "livekit-client";
+import { Track } from "livekit-client";
+import type { TrackReferenceOrPlaceholder } from "@livekit/components-core";
 
 interface RoomProps {
   token: string;
@@ -37,48 +37,19 @@ export default function Room({ token, serverUrl, onLeave }: RoomProps) {
   );
 }
 
-function AgentTranscript({ agentIdentity }: { agentIdentity: string }) {
-  const agentParticipant = useRemoteParticipant(agentIdentity);
-  const audioPublication = agentParticipant?.getTrackPublication(
-    Track.Source.Microphone
-  ) as TrackPublication | undefined;
-
-  const { segments } = useTrackTranscription(
-    audioPublication
-      ? { participant: agentParticipant!, publication: audioPublication }
-      : undefined
-  );
-
+function Transcript({ trackRef, label, className }: {
+  trackRef: TrackReferenceOrPlaceholder;
+  label: string;
+  className: string;
+}) {
+  const { segments } = useTrackTranscription(trackRef);
   if (!segments || segments.length === 0) return null;
   const latest = segments[segments.length - 1];
+  if (!latest?.text?.trim()) return null;
 
   return (
-    <div className="transcript-bubble agent-transcript">
-      <span className="transcript-label">AI Coach</span>
-      <p>{latest.text}</p>
-    </div>
-  );
-}
-
-function UserTranscript() {
-  const { localParticipant } = useLocalParticipant();
-  const audioPublication = localParticipant?.getTrackPublication(
-    Track.Source.Microphone
-  ) as TrackPublication | undefined;
-
-  const { segments } = useTrackTranscription(
-    audioPublication
-      ? { participant: localParticipant, publication: audioPublication }
-      : undefined
-  );
-
-  if (!segments || segments.length === 0) return null;
-  const latest = segments[segments.length - 1];
-  if (!latest.text.trim()) return null;
-
-  return (
-    <div className="transcript-bubble user-transcript">
-      <span className="transcript-label">You</span>
+    <div className={"transcript-bubble " + className}>
+      <span className="transcript-label">{label}</span>
       <p>{latest.text}</p>
     </div>
   );
@@ -98,11 +69,28 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
   const agentSpeaking = useIsSpeaking(agent ?? localParticipant);
   const localSpeaking = useIsSpeaking(localParticipant);
 
-  const localTracks = useTracks([Track.Source.Camera], {
-    onlySubscribed: false,
-  });
-  const localVideoTrack = localTracks.find(
-    (t) => t.participant.identity === localParticipant.identity
+  const allTracks = useTracks(
+    [Track.Source.Camera, Track.Source.Microphone],
+    { onlySubscribed: false }
+  );
+
+  const localVideoTrack = allTracks.find(
+    (t) =>
+      t.participant.identity === localParticipant.identity &&
+      t.source === Track.Source.Camera
+  );
+
+  const localMicTrack = allTracks.find(
+    (t) =>
+      t.participant.identity === localParticipant.identity &&
+      t.source === Track.Source.Microphone
+  );
+
+  const agentMicTrack = allTracks.find(
+    (t) =>
+      agent &&
+      t.participant.identity === agent.identity &&
+      t.source === Track.Source.Microphone
   );
 
   const toggleMic = useCallback(async () => {
@@ -117,7 +105,7 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
 
   return (
     <div className="room">
-      <div className={`video-container ${localSpeaking && !micMuted ? "speaking" : ""}`}>
+      <div className={"video-container" + (localSpeaking && !micMuted ? " speaking" : "")}>
         {localVideoTrack && !camOff ? (
           <VideoTrack trackRef={localVideoTrack} />
         ) : (
@@ -130,15 +118,28 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
           You {micMuted && <span className="muted-badge">🔇</span>}
           {localSpeaking && !micMuted && <span className="speaking-dot" />}
         </div>
+
         {showSubtitles && (
           <div className="subtitles-overlay">
-            <UserTranscript />
-            {agent && <AgentTranscript agentIdentity={agent.identity} />}
+            {localMicTrack && (
+              <Transcript
+                trackRef={localMicTrack}
+                label="You"
+                className="user-transcript"
+              />
+            )}
+            {agentMicTrack && (
+              <Transcript
+                trackRef={agentMicTrack}
+                label="AI Coach"
+                className="agent-transcript"
+              />
+            )}
           </div>
         )}
       </div>
 
-      <div className={`agent-status ${agent ? "connected" : "waiting"}`}>
+      <div className={"agent-status" + (agent ? " connected" : " waiting")}>
         <div className="agent-icon">🤖</div>
         <div className="agent-info">
           <p className="agent-name">AI Speaking Coach</p>
@@ -155,20 +156,23 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
       </div>
 
       <div className="controls">
-        <button className={`ctrl-btn ${micMuted ? "ctrl-off" : ""}`} onClick={toggleMic}>
+        <button className={"ctrl-btn" + (micMuted ? " ctrl-off" : "")} onClick={toggleMic}>
           {micMuted ? "🔇" : "🎤"}
           <span>{micMuted ? "Unmute" : "Mute"}</span>
         </button>
-        <button className={`ctrl-btn ${camOff ? "ctrl-off" : ""}`} onClick={toggleCam}>
+        <button className={"ctrl-btn" + (camOff ? " ctrl-off" : "")} onClick={toggleCam}>
           {camOff ? "📵" : "📷"}
           <span>{camOff ? "Cam On" : "Cam Off"}</span>
         </button>
-        <button className={`ctrl-btn ${showSubtitles ? "ctrl-active" : ""}`} onClick={() => setShowSubtitles(!showSubtitles)}>
+        <button
+          className={"ctrl-btn" + (showSubtitles ? " ctrl-active" : "")}
+          onClick={() => setShowSubtitles(!showSubtitles)}
+        >
           💬
           <span>{showSubtitles ? "Hide CC" : "Show CC"}</span>
         </button>
         <button className="ctrl-btn ctrl-leave" onClick={onLeave}>
-          📵
+          ✖
           <span>Leave</span>
         </button>
       </div>
