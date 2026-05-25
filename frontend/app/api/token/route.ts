@@ -1,4 +1,4 @@
-import { AccessToken } from "livekit-server-sdk";
+import { AccessToken, RoomServiceClient } from "livekit-server-sdk";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
@@ -8,12 +8,25 @@ export async function GET(req: NextRequest) {
 
   const apiKey = process.env.LIVEKIT_API_KEY;
   const apiSecret = process.env.LIVEKIT_API_SECRET;
+  const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
 
-  if (!apiKey || !apiSecret) {
+  if (!apiKey || !apiSecret || !livekitUrl) {
     return NextResponse.json(
       { error: "LiveKit credentials not configured" },
       { status: 500 }
     );
+  }
+
+  const roomService = new RoomServiceClient(
+    livekitUrl.replace("wss://", "https://"),
+    apiKey,
+    apiSecret
+  );
+
+  try {
+    await roomService.createRoom({ name: room });
+  } catch {
+    // Room may already exist, that's fine
   }
 
   const token = new AccessToken(apiKey, apiSecret, {
