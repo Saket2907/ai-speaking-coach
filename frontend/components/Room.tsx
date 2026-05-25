@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback } from "react";
 import {
   LiveKitRoom,
   useLocalParticipant,
@@ -9,10 +9,11 @@ import {
   useIsSpeaking,
   useTracks,
   RoomAudioRenderer,
-  useRoomContext,
+  useTranscriptions,
+  useChat,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { Track, RoomEvent } from "livekit-client";
+import { Track } from "livekit-client";
 
 interface RoomProps {
   token: string;
@@ -36,59 +37,6 @@ export default function Room({ token, serverUrl, onLeave }: RoomProps) {
   );
 }
 
-interface TranscriptLine {
-  id: string;
-  speaker: "you" | "agent";
-  text: string;
-}
-
-function useTranscriptions() {
-  const room = useRoomContext();
-  const [lines, setLines] = useState<TranscriptLine[]>([]);
-
-  useEffect(() => {
-    if (!room) return;
-
-    const handler = (
-      payload: Uint8Array,
-      participant: { identity: string } | undefined
-    ) => {
-      try {
-        const text = new TextDecoder().decode(payload);
-        const data = JSON.parse(text);
-        if (!data.text || !data.text.trim()) return;
-
-        const isAgent = participant?.identity?.startsWith("agent") ?? false;
-        setLines((prev) => {
-          const last = prev[prev.length - 1];
-          // Update last line if same speaker and recent
-          if (last && last.speaker === (isAgent ? "agent" : "you")) {
-            return [
-              ...prev.slice(0, -1),
-              { ...last, text: data.text },
-            ];
-          }
-          return [
-            ...prev.slice(-4), // keep last 4 lines
-            {
-              id: Date.now().toString(),
-              speaker: isAgent ? "agent" : "you",
-              text: data.text,
-            },
-          ];
-        });
-      } catch {
-        // ignore parse errors
-      }
-    };
-
-    room.on(RoomEvent.DataReceived, handler);
-    return () => { room.off(RoomEvent.DataReceived, handler); };
-  }, [room]);
-
-  return lines;
-}
-
 function RoomUI({ onLeave }: { onLeave: () => void }) {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
@@ -100,7 +48,22 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
 
   const agentSpeaking = useIsSpeaking(agent ?? localParticipant);
   const localSpeaking = useIsSpeaking(localParticipant);
-  const transcriptLines = useTranscriptions();
+  const transcriptions = useTranscriptions();
+  const { chatMessages } = useChat();
+
+  type SubLine = { text: string; isAgent: boolean };
+  let lastTwo: SubLine[] = [];
+  if (transcriptions.length > 0) {
+    lastTwo = transcriptions.slice(-2).map((t) => ({
+      text: t.text ?? "",
+      isAgent: (t as unknown as { participantIdentity?: string }).participantIdentity?.startsWith("agent") ?? false,
+    }));
+  } else {
+    lastTwo = chatMessages.slice(-2).map((m) => ({
+      text: m.message,
+      isAgent: m.from?.identity?.startsWith("agent") ?? false,
+    }));
+  }
 
   const localTracks = useTracks([Track.Source.Camera], { onlySubscribed: false });
   const localVideoTrack = localTracks.find(
@@ -142,19 +105,17 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
         </div>
 
         {/* Subtitles */}
-        {showSubtitles && transcriptLines.length > 0 && (
+        {showSubtitles && lastTwo.length > 0 && (
           <div className="subtitles-overlay">
-            {transcriptLines.slice(-2).map((line) => (
-              <div
-                key={line.id}
-                className={"subtitle-line" + (line.speaker === "agent" ? " subtitle-agent" : " subtitle-you")}
-              >
-                <span className="subtitle-speaker">
-                  {line.speaker === "agent" ? "AI Coach" : "You"}
-                </span>
-                <span className="subtitle-text">{line.text}</span>
-              </div>
-            ))}
+            {lastTwo.map((t, i) => (
+                <div
+                  key={i}
+                  className={"subtitle-line" + (t.isAgent ? " subtitle-agent" : " subtitle-you")}
+                >
+                  <span className="subtitle-speaker">{t.isAgent ? "AI Coach" : "You"}</span>
+                  <span className="subtitle-text">{t.text}</span>
+                </div>
+              ))}
           </div>
         )}
       </div>
