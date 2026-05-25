@@ -52,6 +52,11 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
   const { chatMessages } = useChat();
   const agentIdentity = agent?.identity ?? "";
 
+  // Log transcription data to debug
+  if (transcriptions.length > 0) {
+    console.log("Transcription sample:", JSON.stringify(transcriptions[transcriptions.length - 1]));
+  }
+
   type SubLine = { text: string; isAgent: boolean };
   let lastTwo: SubLine[] = [];
   if (transcriptions.length > 0) {
