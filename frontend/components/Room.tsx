@@ -61,7 +61,7 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
   } else {
     lastTwo = chatMessages.slice(-2).map((m) => ({
       text: m.message,
-      isAgent: m.from?.identity?.startsWith("agent") ?? false,
+      isAgent: (m.from?.identity ?? "").startsWith("agent") || (m.from?.identity ?? "").startsWith("AI") || m.from?.identity === agent?.identity,
     }));
   }
 
