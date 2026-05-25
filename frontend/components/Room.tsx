@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   LiveKitRoom,
   useLocalParticipant,
@@ -9,11 +9,10 @@ import {
   useIsSpeaking,
   useTracks,
   RoomAudioRenderer,
-  useTrackTranscription,
+  useRoomContext,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { Track } from "livekit-client";
-import type { TrackReferenceOrPlaceholder } from "@livekit/components-core";
+import { Track, RoomEvent } from "livekit-client";
 
 interface RoomProps {
   token: string;
@@ -37,30 +36,63 @@ export default function Room({ token, serverUrl, onLeave }: RoomProps) {
   );
 }
 
-function Transcript({ trackRef, label, className }: {
-  trackRef: TrackReferenceOrPlaceholder;
-  label: string;
-  className: string;
-}) {
-  const { segments } = useTrackTranscription(trackRef);
-  if (!segments || segments.length === 0) return null;
-  const latest = segments[segments.length - 1];
-  if (!latest?.text?.trim()) return null;
+interface TranscriptLine {
+  id: string;
+  speaker: "you" | "agent";
+  text: string;
+}
 
-  return (
-    <div className={"transcript-bubble " + className}>
-      <span className="transcript-label">{label}</span>
-      <p>{latest.text}</p>
-    </div>
-  );
+function useTranscriptions() {
+  const room = useRoomContext();
+  const [lines, setLines] = useState<TranscriptLine[]>([]);
+
+  useEffect(() => {
+    if (!room) return;
+
+    const handler = (
+      payload: Uint8Array,
+      participant: { identity: string } | undefined
+    ) => {
+      try {
+        const text = new TextDecoder().decode(payload);
+        const data = JSON.parse(text);
+        if (!data.text || !data.text.trim()) return;
+
+        const isAgent = participant?.identity?.startsWith("agent") ?? false;
+        setLines((prev) => {
+          const last = prev[prev.length - 1];
+          // Update last line if same speaker and recent
+          if (last && last.speaker === (isAgent ? "agent" : "you")) {
+            return [
+              ...prev.slice(0, -1),
+              { ...last, text: data.text },
+            ];
+          }
+          return [
+            ...prev.slice(-4), // keep last 4 lines
+            {
+              id: Date.now().toString(),
+              speaker: isAgent ? "agent" : "you",
+              text: data.text,
+            },
+          ];
+        });
+      } catch {
+        // ignore parse errors
+      }
+    };
+
+    room.on(RoomEvent.DataReceived, handler);
+    return () => { room.off(RoomEvent.DataReceived, handler); };
+  }, [room]);
+
+  return lines;
 }
 
 function RoomUI({ onLeave }: { onLeave: () => void }) {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
-  const agent = remoteParticipants.find((p) =>
-    p.identity.startsWith("agent")
-  );
+  const agent = remoteParticipants.find((p) => p.identity.startsWith("agent"));
 
   const [micMuted, setMicMuted] = useState(false);
   const [camOff, setCamOff] = useState(false);
@@ -68,29 +100,11 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
 
   const agentSpeaking = useIsSpeaking(agent ?? localParticipant);
   const localSpeaking = useIsSpeaking(localParticipant);
+  const transcriptLines = useTranscriptions();
 
-  const allTracks = useTracks(
-    [Track.Source.Camera, Track.Source.Microphone],
-    { onlySubscribed: false }
-  );
-
-  const localVideoTrack = allTracks.find(
-    (t) =>
-      t.participant.identity === localParticipant.identity &&
-      t.source === Track.Source.Camera
-  );
-
-  const localMicTrack = allTracks.find(
-    (t) =>
-      t.participant.identity === localParticipant.identity &&
-      t.source === Track.Source.Microphone
-  );
-
-  const agentMicTrack = allTracks.find(
-    (t) =>
-      agent &&
-      t.participant.identity === agent.identity &&
-      t.source === Track.Source.Microphone
+  const localTracks = useTracks([Track.Source.Camera], { onlySubscribed: false });
+  const localVideoTrack = localTracks.find(
+    (t) => t.participant.identity === localParticipant.identity
   );
 
   const toggleMic = useCallback(async () => {
@@ -105,75 +119,122 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
 
   return (
     <div className="room">
+      {/* Video */}
       <div className={"video-container" + (localSpeaking && !micMuted ? " speaking" : "")}>
         {localVideoTrack && !camOff ? (
           <VideoTrack trackRef={localVideoTrack} />
         ) : (
           <div className="video-placeholder">
-            <span>{camOff ? "📵" : "📷"}</span>
-            <p>{camOff ? "Camera off" : "Camera loading..."}</p>
+            <div className="cam-off-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M16 16v1a2 2 0 01-2 2H3a2 2 0 01-2-2V7a2 2 0 012-2h2m5.66 0H14a2 2 0 012 2v3.34l1 1L23 7v10"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            </div>
+            <p>{camOff ? "Camera off" : "Starting camera..."}</p>
           </div>
         )}
+
         <div className="participant-label">
-          You {micMuted && <span className="muted-badge">🔇</span>}
-          {localSpeaking && !micMuted && <span className="speaking-dot" />}
+          <span className={"status-dot" + (localSpeaking && !micMuted ? " active" : "")} />
+          You
+          {micMuted && <span className="mic-off-tag">muted</span>}
         </div>
 
-        {showSubtitles && (
+        {/* Subtitles */}
+        {showSubtitles && transcriptLines.length > 0 && (
           <div className="subtitles-overlay">
-            {localMicTrack && (
-              <Transcript
-                trackRef={localMicTrack}
-                label="You"
-                className="user-transcript"
-              />
-            )}
-            {agentMicTrack && (
-              <Transcript
-                trackRef={agentMicTrack}
-                label="AI Coach"
-                className="agent-transcript"
-              />
-            )}
+            {transcriptLines.slice(-2).map((line) => (
+              <div
+                key={line.id}
+                className={"subtitle-line" + (line.speaker === "agent" ? " subtitle-agent" : " subtitle-you")}
+              >
+                <span className="subtitle-speaker">
+                  {line.speaker === "agent" ? "AI Coach" : "You"}
+                </span>
+                <span className="subtitle-text">{line.text}</span>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      <div className={"agent-status" + (agent ? " connected" : " waiting")}>
-        <div className="agent-icon">🤖</div>
+      {/* Agent card */}
+      <div className={"agent-card" + (agent ? " connected" : "")}>
+        <div className="agent-avatar">
+          <span>🤖</span>
+          {agent && (
+            <span className={"agent-dot" + (agentSpeaking ? " speaking" : " listening")} />
+          )}
+        </div>
         <div className="agent-info">
           <p className="agent-name">AI Speaking Coach</p>
-          {!agent && <p className="agent-state">Waiting for agent to join...</p>}
-          {agent && !agentSpeaking && (
-            <p className="agent-state listening">● Listening...</p>
-          )}
-          {agent && agentSpeaking && (
-            <p className="agent-state speaking">
-              <span className="pulse" /> Speaking...
-            </p>
-          )}
+          {!agent && <p className="agent-state muted-text">Waiting to join...</p>}
+          {agent && !agentSpeaking && <p className="agent-state green-text">● Listening</p>}
+          {agent && agentSpeaking && <p className="agent-state purple-text">◆ Speaking</p>}
         </div>
       </div>
 
-      <div className="controls">
-        <button className={"ctrl-btn" + (micMuted ? " ctrl-off" : "")} onClick={toggleMic}>
-          {micMuted ? "🔇" : "🎤"}
-          <span>{micMuted ? "Unmute" : "Mute"}</span>
-        </button>
-        <button className={"ctrl-btn" + (camOff ? " ctrl-off" : "")} onClick={toggleCam}>
-          {camOff ? "📵" : "📷"}
-          <span>{camOff ? "Cam On" : "Cam Off"}</span>
-        </button>
+      {/* Controls */}
+      <div className="control-bar">
         <button
-          className={"ctrl-btn" + (showSubtitles ? " ctrl-active" : "")}
-          onClick={() => setShowSubtitles(!showSubtitles)}
+          className={"control-btn" + (micMuted ? " control-btn--off" : "")}
+          onClick={toggleMic}
+          title={micMuted ? "Unmute" : "Mute"}
         >
-          💬
-          <span>{showSubtitles ? "Hide CC" : "Show CC"}</span>
+          <div className="control-btn__icon">
+            {micMuted ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/>
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/>
+              </svg>
+            )}
+          </div>
+          <span className="control-btn__label">{micMuted ? "Unmute" : "Mute"}</span>
         </button>
-        <button className="ctrl-btn ctrl-leave" onClick={onLeave}>
-          ✖
-          <span>Leave</span>
+
+        <button
+          className={"control-btn" + (camOff ? " control-btn--off" : "")}
+          onClick={toggleCam}
+          title={camOff ? "Start Video" : "Stop Video"}
+        >
+          <div className="control-btn__icon">
+            {camOff ? (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M21 6.5l-4-4-15 15 4 4 2.5-2.5c.28.08.58.12.88.12 1.66 0 3-1.34 3-3 0-.3-.04-.6-.12-.88L21 6.5zm-9 9c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zM3.27 2L2 3.27 4.73 6H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c.55 0 1.05-.22 1.41-.59l1.32 1.32L23 21.46 3.27 2zM8 18H4V8h.73L8 11.27V18z"/>
+              </svg>
+            ) : (
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+              </svg>
+            )}
+          </div>
+          <span className="control-btn__label">{camOff ? "Start Video" : "Stop Video"}</span>
+        </button>
+
+        <button
+          className={"control-btn" + (showSubtitles ? " control-btn--active" : "")}
+          onClick={() => setShowSubtitles(!showSubtitles)}
+          title="Toggle subtitles"
+        >
+          <div className="control-btn__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM4 12h4v2H4v-2zm10 6H4v-2h10v2zm6 0h-4v-2h4v2zm0-4H10v-2h10v2z"/>
+            </svg>
+          </div>
+          <span className="control-btn__label">{showSubtitles ? "Hide CC" : "Show CC"}</span>
+        </button>
+
+        <button className="control-btn control-btn--leave" onClick={onLeave}>
+          <div className="control-btn__icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M10.9 15.6l1.4 1.4 5-5-5-5-1.4 1.4 2.6 2.6H3v2h10.5l-2.6 2.6zM19 3H5c-1.1 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/>
+            </svg>
+          </div>
+          <span className="control-btn__label">Leave</span>
         </button>
       </div>
     </div>

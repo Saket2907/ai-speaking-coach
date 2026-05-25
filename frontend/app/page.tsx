@@ -14,9 +14,7 @@ export default function Home() {
     setError(null);
     try {
       const roomId = "session-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
-      const res = await fetch(
-        "/api/token?room=" + roomId + "&username=user-" + Date.now()
-      );
+      const res = await fetch("/api/token?room=" + roomId + "&username=user-" + Date.now());
       if (!res.ok) throw new Error("Failed to get session token");
       const data = await res.json();
       setToken(data.token);
@@ -53,11 +51,7 @@ export default function Home() {
           feedback on clarity, pacing, and filler words.
         </p>
         {error && <p className="error">{error}</p>}
-        <button
-          className="btn-primary"
-          onClick={handleJoin}
-          disabled={loading}
-        >
+        <button className="btn-primary" onClick={handleJoin} disabled={loading}>
           {loading ? "Connecting..." : "Join Session"}
         </button>
       </div>
