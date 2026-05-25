@@ -117,11 +117,7 @@ function RoomUI({ onLeave }: { onLeave: () => void }) {
         {showSubtitles && lastTwo.length > 0 && (
           <div className="subtitles-overlay">
             {lastTwo.map((t, i) => (
-                <div
-                  key={i}
-                  className={"subtitle-line" + (t.isAgent ? " subtitle-agent" : " subtitle-you")}
-                >
-                  <span className="subtitle-speaker">{t.isAgent ? "AI Coach" : "You"}</span>
+                <div key={i} className="subtitle-line">
                   <span className="subtitle-text">{t.text}</span>
                 </div>
               ))}

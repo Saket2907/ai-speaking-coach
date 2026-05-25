@@ -313,30 +313,13 @@ h1 {
 }
 
 .subtitle-line {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
   background: rgba(0, 0, 0, 0.75);
   border-radius: 8px;
-  padding: 0.35rem 0.75rem;
+  padding: 0.4rem 0.85rem;
   backdrop-filter: blur(6px);
-  max-width: 85%;
+  max-width: 90%;
+  align-self: center;
 }
-
-.subtitle-you { align-self: flex-end; }
-.subtitle-agent { align-self: flex-start; }
-
-.subtitle-speaker {
-  font-size: 0.65rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.subtitle-you .subtitle-speaker { color: #4caf50; }
-.subtitle-agent .subtitle-speaker { color: #8b7cf6; }
 
 .subtitle-text {
   font-size: 0.85rem;
